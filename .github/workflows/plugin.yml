@@ -14,6 +14,15 @@ permissions:
   contents: write
 
 jobs:
+  linux:
+    # Quick compile check of the measuring and scoring code.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - run: cmake -S plugin -B build -DCMAKE_BUILD_TYPE=Release -DANALYZER_BUILD_PLUGIN=OFF
+      - run: cmake --build build -j 4 --target AnalyzerSelfTest
+
   mac:
     runs-on: macos-14
     timeout-minutes: 60
