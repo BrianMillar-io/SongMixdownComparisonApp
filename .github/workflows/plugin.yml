@@ -1,0 +1,83 @@
+# Builds the Analyzer App plugin (Audio Unit for Logic, plus VST3) on a Mac,
+# checks it with Apple's auval, and publishes the zip to the plugin-builds
+# branch so it can be fetched without a GitHub login in the browser.
+name: Build plugin
+
+on:
+  push:
+    paths:
+      - "plugin/**"
+      - ".github/workflows/plugin.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  linux:
+    # Quick compile check of the measuring and scoring code.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      # JUCE's build helper (juceaide) needs the GUI headers even for a console target.
+      - run: sudo apt-get update -q && sudo apt-get install -y -q libfreetype-dev libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libasound2-dev libfontconfig1-dev libgl-dev
+      - run: cmake -S plugin -B build -DCMAKE_BUILD_TYPE=Release -DANALYZER_BUILD_PLUGIN=OFF
+      - run: cmake --build build -j 4 --target AnalyzerSelfTest
+
+  mac:
+    runs-on: macos-14
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: >
+          cmake -S plugin -B build -G "Unix Makefiles"
+          -DCMAKE_BUILD_TYPE=Release
+          "-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64"
+
+      - name: Build
+        run: cmake --build build --config Release -j 4 --target AnalyzerApp_AU AnalyzerApp_VST3 AnalyzerSelfTest
+
+      - name: Sign (ad hoc, for running on your own Mac)
+        run: |
+          cd build/AnalyzerApp_artefacts/Release
+          codesign --force --deep --sign - "AU/Analyzer App.component"
+          codesign --force --deep --sign - "VST3/Analyzer App.vst3"
+          codesign --verify --deep --strict "AU/Analyzer App.component"
+          lipo -info "AU/Analyzer App.component/Contents/MacOS/Analyzer App"
+
+      - name: Check the Audio Unit with auval
+        run: |
+          mkdir -p ~/Library/Audio/Plug-Ins/Components
+          cp -R "build/AnalyzerApp_artefacts/Release/AU/Analyzer App.component" ~/Library/Audio/Plug-Ins/Components/
+          killall -9 AudioComponentRegistrar 2>/dev/null || true
+          sleep 2
+          auval -a | grep -i anlz || true
+          auval -v aufx Mxa1 Anlz | tee auval.txt
+          grep -q "AU VALIDATION SUCCEEDED" auval.txt
+
+      - name: Package
+        run: |
+          mkdir -p dist
+          cd build/AnalyzerApp_artefacts/Release
+          ditto -c -k --keepParent "AU/Analyzer App.component" "$GITHUB_WORKSPACE/dist/Analyzer-App-AU.zip"
+          ditto -c -k --keepParent "VST3/Analyzer App.vst3" "$GITHUB_WORKSPACE/dist/Analyzer-App-VST3.zip"
+          cd "$GITHUB_WORKSPACE"
+          echo "Built from ${GITHUB_SHA} on $(date -u +%Y-%m-%dT%H:%M:%SZ)" > dist/BUILD.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: analyzer-app-plugin
+          path: dist/
+
+      - name: Publish to the plugin-builds branch
+        run: |
+          cd dist
+          git init -q -b plugin-builds
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add -A
+          git commit -q -m "Plugin built from ${GITHUB_SHA}"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" plugin-builds
