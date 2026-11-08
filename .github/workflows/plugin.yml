@@ -20,6 +20,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+      # JUCE's build helper (juceaide) needs the GUI headers even for a console target.
+      - run: sudo apt-get update -q && sudo apt-get install -y -q libfreetype-dev libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libasound2-dev libfontconfig1-dev libgl-dev
       - run: cmake -S plugin -B build -DCMAKE_BUILD_TYPE=Release -DANALYZER_BUILD_PLUGIN=OFF
       - run: cmake --build build -j 4 --target AnalyzerSelfTest
 
